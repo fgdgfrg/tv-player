@@ -1,28 +1,142 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-iframe { width: 100%; height: 100%; border: none; display: block; }
-</style>
+    <meta charset="UTF-8">
+    <title>TV</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+        #player-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+        iframe, video { width: 100%; height: 100%; border: none; object-fit: cover; }
+    </style>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script src="https://player.twitch.tv/js/embed/v1.js"></script>
 </head>
 <body>
-<iframe id="player" allowfullscreen allow="autoplay; fullscreen; encrypted-media"></iframe>
-<script>
-const p = new URLSearchParams(window.location.search);
-const type = p.get('type');
-const v = p.get('v');
-const f = document.getElementById('player');
+    <div id="player-container"></div>
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const type = params.get('type');
+        const videoId = params.get('v');
+        const startTime = parseInt(params.get('t')) || 0;
+        const container = document.getElementById('player-container');
 
-if (type === 'youtube' && v) {
-    f.src = 'https://www.youtube-nocookie.com/embed/' + v + '?autoplay=1&controls=1';
-} else if (type === 'kick' && v) {
-    f.src = 'https://player.kick.com/' + v + '?autoplay=1';
-} else if (type === 'twitch' && v) {
-    f.src = 'https://player.twitch.tv/?channel=' + v + '&parent=fgdgfrg.github.io&autoplay=true';
-}
-</script>
+        let ytPlayer, twitchPlayer, directPlayer;
+        let currentVolume = 1.0;
+        let adSkipInterval = null;
+
+        function initYouTube() {
+            ytPlayer = new YT.Player('player-container', {
+                videoId: videoId,
+                playerVars: {
+                    'autoplay': 1,
+                    'controls': 1,
+                    'mute': 1,
+                    'start': startTime,
+                    'rel': 0,
+                    'modestbranding': 1,
+                    'iv_load_policy': 3,
+                },
+                events: {
+                    'onReady': function(event) {
+                        event.target.playVideo();
+                        setTimeout(() => {
+                            if (ytPlayer && typeof ytPlayer.unMute === 'function') {
+                                ytPlayer.unMute();
+                                ytPlayer.setVolume(currentVolume * 100);
+                            }
+                        }, 1500);
+
+                        adSkipInterval = setInterval(() => {
+                            if (!ytPlayer || typeof ytPlayer.getPlayerState !== 'function') return;
+                            try {
+                                var current = ytPlayer.getCurrentTime();
+                                var state = ytPlayer.getPlayerState();
+                                if (state === YT.PlayerState.PLAYING && current < startTime - 3) {
+                                    ytPlayer.seekTo(startTime, true);
+                                }
+                            } catch(e) {}
+                        }, 1000);
+                    },
+                    'onStateChange': function(event) {
+                        if (event.data === YT.PlayerState.PLAYING) {
+                            setTimeout(() => {
+                                try {
+                                    var current = ytPlayer.getCurrentTime();
+                                    if (current < startTime - 3) {
+                                        ytPlayer.seekTo(startTime, true);
+                                    }
+                                } catch(e) {}
+                            }, 500);
+                        }
+                    }
+                }
+            });
+        }
+
+        if (type === 'youtube' && videoId) {
+            if (typeof YT !== 'undefined' && YT.Player) {
+                initYouTube();
+            } else {
+                window.onYouTubeIframeAPIReady = initYouTube;
+            }
+
+        } else if (type === 'twitch' && videoId) {
+            twitchPlayer = new Twitch.Player("player-container", {
+                channel: videoId,
+                width: "100%",
+                height: "100%",
+                autoplay: true,
+                muted: false
+            });
+            twitchPlayer.setVolume(currentVolume);
+
+        } else if (type === 'kick' && videoId) {
+            container.innerHTML = `<iframe src="https://player.kick.com/${videoId}?autoplay=true" allow="autoplay; fullscreen"></iframe>`;
+
+        } else if (type === 'direct' && videoId) {
+            container.innerHTML = `<video id="direct-video" src="${decodeURIComponent(videoId)}" autoplay loop></video>`;
+            directPlayer = document.getElementById('direct-video');
+            directPlayer.currentTime = startTime;
+            directPlayer.volume = currentVolume;
+        }
+
+        window.addEventListener('message', function(event) {
+            let data = event.data;
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch(e) {}
+            }
+            if (!data || !data.type) return;
+
+            if (data.type === 'volume') {
+                currentVolume = Math.max(0, Math.min(1, data.volume));
+                applyVolume(currentVolume);
+            }
+
+            if (data.type === 'stop') {
+                if (adSkipInterval) clearInterval(adSkipInterval);
+                if (ytPlayer && typeof ytPlayer.stopVideo === 'function') ytPlayer.stopVideo();
+                if (twitchPlayer) twitchPlayer.pause();
+                if (directPlayer) directPlayer.pause();
+                container.innerHTML = '';
+            }
+        });
+
+        function applyVolume(vol) {
+            if (type === 'youtube' && ytPlayer && typeof ytPlayer.setVolume === 'function') {
+                if (vol > 0.01) {
+                    ytPlayer.unMute();
+                    ytPlayer.setVolume(vol * 100);
+                } else {
+                    ytPlayer.mute();
+                }
+            } else if (type === 'twitch' && twitchPlayer) {
+                twitchPlayer.setVolume(vol);
+                if (vol === 0) twitchPlayer.setMuted(true);
+                else twitchPlayer.setMuted(false);
+            } else if (type === 'direct' && directPlayer) {
+                directPlayer.volume = vol;
+            }
+        }
+    </script>
 </body>
 </html>
