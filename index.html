@@ -3,140 +3,100 @@
 <head>
     <meta charset="UTF-8">
     <title>TV</title>
+    <meta name="referrer" content="no-referrer">
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
-        #player-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
-        iframe, video { width: 100%; height: 100%; border: none; object-fit: cover; }
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            overflow: hidden;
+        }
+        #player-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        iframe, video {
+            width: 100%;
+            height: 100%;
+            border: none;
+            object-fit: cover;
+            /* منع اللاعب من التفاعل مع الشاشة بالماوس */
+            pointer-events: none; 
+        }
     </style>
-    <script src="https://www.youtube.com/iframe_api"></script>
-    <script src="https://player.twitch.tv/js/embed/v1.js"></script>
 </head>
 <body>
     <div id="player-container"></div>
     <script>
+        // سحب البيانات اللي يرسلها السكربت (client.lua)
         const params = new URLSearchParams(window.location.search);
         const type = params.get('type');
         const videoId = params.get('v');
         const startTime = parseInt(params.get('t')) || 0;
         const container = document.getElementById('player-container');
 
-        let ytPlayer, twitchPlayer, directPlayer;
         let currentVolume = 1.0;
-        let adSkipInterval = null;
 
-        function initYouTube() {
-            ytPlayer = new YT.Player('player-container', {
-                videoId: videoId,
-                playerVars: {
-                    'autoplay': 1,
-                    'controls': 1,
-                    'mute': 1,
-                    'start': startTime,
-                    'rel': 0,
-                    'modestbranding': 1,
-                    'iv_load_policy': 3,
-                },
-                events: {
-                    'onReady': function(event) {
-                        event.target.playVideo();
-                        setTimeout(() => {
-                            if (ytPlayer && typeof ytPlayer.unMute === 'function') {
-                                ytPlayer.unMute();
-                                ytPlayer.setVolume(currentVolume * 100);
-                            }
-                        }, 1500);
-
-                        adSkipInterval = setInterval(() => {
-                            if (!ytPlayer || typeof ytPlayer.getPlayerState !== 'function') return;
-                            try {
-                                var current = ytPlayer.getCurrentTime();
-                                var state = ytPlayer.getPlayerState();
-                                if (state === YT.PlayerState.PLAYING && current < startTime - 3) {
-                                    ytPlayer.seekTo(startTime, true);
-                                }
-                            } catch(e) {}
-                        }, 1000);
-                    },
-                    'onStateChange': function(event) {
-                        if (event.data === YT.PlayerState.PLAYING) {
-                            setTimeout(() => {
-                                try {
-                                    var current = ytPlayer.getCurrentTime();
-                                    if (current < startTime - 3) {
-                                        ytPlayer.seekTo(startTime, true);
-                                    }
-                                } catch(e) {}
-                            }, 500);
-                        }
-                    }
-                }
-            });
-        }
-
+        // 1. تشغيل اليوتيوب
         if (type === 'youtube' && videoId) {
-            if (typeof YT !== 'undefined' && YT.Player) {
-                initYouTube();
-            } else {
-                window.onYouTubeIframeAPIReady = initYouTube;
-            }
-
-        } else if (type === 'twitch' && videoId) {
-            twitchPlayer = new Twitch.Player("player-container", {
-                channel: videoId,
-                width: "100%",
-                height: "100%",
-                autoplay: true,
-                muted: false
-            });
-            twitchPlayer.setVolume(currentVolume);
-
-        } else if (type === 'kick' && videoId) {
-            container.innerHTML = `<iframe src="https://player.kick.com/${videoId}?autoplay=true" allow="autoplay; fullscreen"></iframe>`;
-
-        } else if (type === 'direct' && videoId) {
+            // استخدمنا start عشان يزامن الوقت، و origin لتخطي حظر يوتيوب
+            container.innerHTML = `<iframe id="yt" src="https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0&rel=0&disablekb=1&enablejsapi=1&start=${startTime}&origin=https://www.youtube.com" allow="autoplay; encrypted-media"></iframe>`;
+        } 
+        // 2. تشغيل تويتش
+        else if (type === 'twitch' && videoId) {
+            container.innerHTML = `<iframe id="tw" src="https://player.twitch.tv/?channel=${videoId}&parent=twitch.tv&parent=localhost&autoplay=true" allow="autoplay; fullscreen"></iframe>`;
+        } 
+        // 3. تشغيل كيك
+        else if (type === 'kick' && videoId) {
+            container.innerHTML = `<iframe id="kk" src="https://player.kick.com/${videoId}?autoplay=true" allow="autoplay; fullscreen"></iframe>`;
+        } 
+        // 4. تشغيل روابط الفيديو المباشرة (mp4, webm)
+        else if (type === 'direct' && videoId) {
             container.innerHTML = `<video id="direct-video" src="${decodeURIComponent(videoId)}" autoplay loop></video>`;
-            directPlayer = document.getElementById('direct-video');
-            directPlayer.currentTime = startTime;
-            directPlayer.volume = currentVolume;
+            const directVideo = document.getElementById('direct-video');
+            directVideo.currentTime = startTime; // مزامنة الوقت
         }
 
+        // استقبال أوامر الصوت والإيقاف من السكربت (لتفعيل الصوت المحيطي 3D)
         window.addEventListener('message', function(event) {
             let data = event.data;
             if (typeof data === 'string') {
-                try { data = JSON.parse(data); } catch(e) {}
+                try { data = JSON.parse(data); } catch (e) {}
             }
             if (!data || !data.type) return;
 
+            // التحكم بمستوى الصوت
             if (data.type === 'volume') {
                 currentVolume = Math.max(0, Math.min(1, data.volume));
-                applyVolume(currentVolume);
+                
+                if (type === 'youtube') {
+                    const yt = document.getElementById('yt');
+                    if (yt && yt.contentWindow) {
+                        yt.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [currentVolume * 100] }), '*');
+                    }
+                } 
+                else if (type === 'twitch') {
+                    const tw = document.getElementById('tw');
+                    if (tw && tw.contentWindow) {
+                        tw.contentWindow.postMessage(JSON.stringify({ event: 'setVolume', data: [currentVolume] }), '*');
+                    }
+                } 
+                else if (type === 'direct') {
+                    const dv = document.getElementById('direct-video');
+                    if (dv) dv.volume = currentVolume;
+                }
             }
 
+            // إيقاف الشاشة
             if (data.type === 'stop') {
-                if (adSkipInterval) clearInterval(adSkipInterval);
-                if (ytPlayer && typeof ytPlayer.stopVideo === 'function') ytPlayer.stopVideo();
-                if (twitchPlayer) twitchPlayer.pause();
-                if (directPlayer) directPlayer.pause();
                 container.innerHTML = '';
             }
         });
-
-        function applyVolume(vol) {
-            if (type === 'youtube' && ytPlayer && typeof ytPlayer.setVolume === 'function') {
-                if (vol > 0.01) {
-                    ytPlayer.unMute();
-                    ytPlayer.setVolume(vol * 100);
-                } else {
-                    ytPlayer.mute();
-                }
-            } else if (type === 'twitch' && twitchPlayer) {
-                twitchPlayer.setVolume(vol);
-                if (vol === 0) twitchPlayer.setMuted(true);
-                else twitchPlayer.setMuted(false);
-            } else if (type === 'direct' && directPlayer) {
-                directPlayer.volume = vol;
-            }
-        }
     </script>
 </body>
 </html>
